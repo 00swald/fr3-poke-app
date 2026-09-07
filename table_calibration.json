@@ -1,0 +1,15 @@
+{
+  "theta_deg": 0.0,
+  "tx_mm": 0.0,
+  "ty_mm": 0.0,
+  "z0_mm": 0.0,
+  "pitch_mm": 25.4,
+  "n_points": 0,
+  "residual_rms_mm": null,
+  "per_point_residual_mm": [],
+  "z_spread_mm": null,
+  "collinearity_ratio": null,
+  "reflection_detected": false,
+  "placeholder": true,
+  "warning": "PLACEHOLDER -- not fitted from real touch data. theta/tx/ty are identity (unknown yaw/offset) and z0 was chosen conservatively (errs toward hovering above the table, not into it). Do not trust XY accuracy or run contact/insertion moves against this calibration. Replace with `fit`/`capture` using >=3 real non-collinear table touches as soon as possible."
+}

@@ -1,0 +1,13 @@
+# Web app dependencies for arm_control_webapp/.
+#
+# The sibling repo-root modules this app imports as libraries
+# (stl_geometry.py, table_calibration.py, move_to_spheres.py, Bota_sys.py)
+# bring their own dependencies -- see ../requirements_stl_tools.txt for
+# numpy-stl, and this repo's existing environment for
+# numpy/scipy/pandas/fairino/inputs/pyserial/crc. Those are NOT re-listed
+# here, and are imported lazily exactly where the existing code already
+# does it (fairino/inputs/Bota_sys only inside functions that need real
+# hardware), so this app starts and every simulated-mode path works with
+# none of them installed.
+
+flask>=2.2

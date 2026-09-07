@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FR3 Arm Control</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<script src="{{ url_for('static', filename='vendor/plotly.min.js') }}"></script>
+</head>
+<body>
+
+<header id="top-bar">
+  <h1>FR3 Arm Control</h1>
+  <div id="settings-summary" class="pill-row">loading settings...</div>
+</header>
+
+<nav id="mode-tabs">
+  <button class="tab-btn active" data-mode="mode1">1. Target Sphere Centers</button>
+  <button class="tab-btn" data-mode="mode2">2. Drag-Teach Poke</button>
+  <button class="tab-btn" data-mode="mode3">3. Height Map</button>
+</nav>
+
+<main>
+
+  <!-- ===================== Mode 1 ===================== -->
+  <section id="mode1-panel" class="mode-panel active">
+    <div class="panel-grid">
+
+      <div class="card">
+        <h2>1. Upload STL</h2>
+        <input type="file" id="m1-stl-file" accept=".stl,.STL">
+        <button id="m1-upload-btn">Upload &amp; Detect Spheres</button>
+        <div id="m1-upload-result" class="result-box"></div>
+      </div>
+
+      <div class="card">
+        <h2>2. Mount hole (COM directly above this hole)</h2>
+        <canvas id="m1-grid" width="900" height="450"></canvas>
+        <div class="grid-readout">
+          Selected hole: col <input type="number" id="m1-col" step="1"> ,
+          row <input type="number" id="m1-row" step="1">
+        </div>
+        <label>Mount yaw (degrees): <input type="number" id="m1-yaw" value="0" step="0.1"></label>
+      </div>
+
+      <div class="card">
+        <h2>3. Preview</h2>
+        <label>Reach to:
+          <select id="m1-reach-to"><option value="surface" selected>surface</option><option value="center">center</option></select>
+        </label>
+        <label>Standoff (mm): <input type="number" id="m1-standoff-mm" value="30"></label>
+        <button id="m1-preview-btn">Preview targets</button>
+        <div id="m1-preview-result" class="result-box"></div>
+      </div>
+
+      <div class="card">
+        <h2>4. Execute</h2>
+        <div class="param-grid">
+          <label>Standoff vel: <input type="number" id="m1-standoff-vel" value="20"></label>
+          <label>Approach vel: <input type="number" id="m1-approach-vel" value="10"></label>
+          <label>Force threshold (N): <input type="number" id="m1-force-threshold" value="5.0"></label>
+          <label>Sensor stale (ms): <input type="number" id="m1-sensor-stale" value="200"></label>
+          <label>Pre-probe start Z offset (mm): <input type="number" id="m1-probe-start-z" value="50"></label>
+          <label>Pre-probe min Z offset (mm): <input type="number" id="m1-probe-min-z" value="-20"></label>
+          <label>Pre-probe vel: <input type="number" id="m1-probe-vel" value="10"></label>
+        </div>
+        <label><input type="checkbox" id="m1-trusted-run"> Trusted run (skip per-point confirmation)</label>
+        <p class="note">⚠️ FR3 orientation convention (ZYX Euler) is not yet hardware-verified.
+          See <code>move_to_spheres.py</code>'s module docstring before the first real execution.</p>
+        <button id="m1-execute-btn">Execute</button>
+        <button id="m1-abort-btn" class="danger">Abort</button>
+        <button id="m1-simulate-collision-btn">Simulate contact now</button>
+      </div>
+
+      <div class="card wide">
+        <h2>Live results</h2>
+        <div id="m1-results"></div>
+        <div id="m1-registration"></div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ===================== Mode 2 ===================== -->
+  <section id="mode2-panel" class="mode-panel">
+    <div class="panel-grid">
+      <div class="card wide">
+        <h2>Drag-teach aim, then gamepad-release poke</h2>
+        <p class="note">Put the arm in drag-teach on the pendant, hand-aim it at the target, then press
+          Start below and press any gamepad button to release and poke forward along the tool's own +Z.</p>
+        <div class="param-grid">
+          <label>Force threshold (N): <input type="number" id="m2-force-threshold" value="5.0"></label>
+          <label>Search distance (mm): <input type="number" id="m2-search-distance" value="200"></label>
+          <label>Approach vel: <input type="number" id="m2-approach-vel" value="20"></label>
+          <label>Sensor stale (ms): <input type="number" id="m2-sensor-stale" value="200"></label>
+        </div>
+        <button id="m2-start-btn">Start</button>
+        <button id="m2-stop-btn" class="danger">Stop</button>
+        <button id="m2-simulate-collision-btn">Simulate contact now</button>
+        <div id="m2-graph" style="width:100%;max-width:900px;height:420px;"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== Mode 3 ===================== -->
+  <section id="mode3-panel" class="mode-panel">
+    <div class="panel-grid">
+      <div class="card">
+        <h2>1. Center hole</h2>
+        <canvas id="m3-grid" width="900" height="450"></canvas>
+        <div class="grid-readout">
+          Selected hole: col <input type="number" id="m3-col" step="1"> ,
+          row <input type="number" id="m3-row" step="1">
+        </div>
+        <label>Probe spacing (mm): <input type="number" id="m3-spacing" value="5"></label>
+      </div>
+
+      <div class="card">
+        <h2>2. Probe parameters</h2>
+        <div class="param-grid">
+          <label>Force threshold (N): <input type="number" id="m3-force-threshold" value="5.0"></label>
+          <label>Sensor stale (ms): <input type="number" id="m3-sensor-stale" value="200"></label>
+          <label>Start Z offset (mm): <input type="number" id="m3-probe-start-z" value="50"></label>
+          <label>Min Z offset (mm): <input type="number" id="m3-probe-min-z" value="-20"></label>
+          <label>Probe vel: <input type="number" id="m3-probe-vel" value="10"></label>
+        </div>
+        <button id="m3-start-btn">Start height map</button>
+        <button id="m3-abort-btn" class="danger">Abort</button>
+        <button id="m3-simulate-collision-btn">Simulate contact now</button>
+      </div>
+
+      <div class="card wide">
+        <h2>Height map (11x11)</h2>
+        <div id="m3-heatmap"></div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer id="status-bar">
+  <span id="status-running-dot" class="dot idle"></span>
+  <span id="status-text">idle</span>
+  <span id="status-error"></span>
+</footer>
+
+<div id="confirm-modal" class="modal hidden">
+  <div class="modal-box">
+    <h3>At standoff</h3>
+    <p id="confirm-details"></p>
+    <button id="confirm-continue">Continue</button>
+    <button id="confirm-skip">Skip</button>
+    <button id="confirm-abort" class="danger">Abort</button>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/grid.js') }}"></script>
+<script src="{{ url_for('static', filename='js/mode1.js') }}"></script>
+<script src="{{ url_for('static', filename='js/mode2.js') }}"></script>
+<script src="{{ url_for('static', filename='js/mode3.js') }}"></script>
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
