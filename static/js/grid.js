@@ -1,8 +1,11 @@
-// grid.js -- a 36x72 optical-table hole-grid widget, shared by Mode 1
-// (mount hole selection) and Mode 3 (height-map center selection).
+// grid.js -- a 40x60 optical-table hole-grid widget, shared by Mode 1
+// (mount hole selection) and Mode 3 (height-map center selection). Column 0
+// is the leftmost hole, row 0 is the FRONT/nearest row of the table -- drawn
+// at the bottom of the canvas, so the widget reads left-to-right,
+// bottom-to-top like a normal x,y plot rather than screen/image coordinates.
 //
 // Rendered on a <canvas>, not a per-cell DOM table: with n_cols*n_rows up
-// to ~2592 cells, a DOM table is unnecessary weight for something that's
+// to ~2400 cells, a DOM table is unnecessary weight for something that's
 // really just click-to-select-a-dot. A single canvas redraw per selection
 // change is trivially fast at this scale.
 
@@ -10,8 +13,8 @@ class HoleGrid {
   constructor(canvas, opts) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
-    this.nCols = (opts && opts.nCols) || 72;
-    this.nRows = (opts && opts.nRows) || 36;
+    this.nCols = (opts && opts.nCols) || 60;
+    this.nRows = (opts && opts.nRows) || 40;
     this.onSelect = (opts && opts.onSelect) || function () {};
     this.selected = null; // {col, row}
     this.overlayPoints = []; // extra markers, e.g. mode3's preview probe grid
@@ -44,7 +47,7 @@ class HoleGrid {
     const px = (e.clientX - rect.left) * scaleX;
     const py = (e.clientY - rect.top) * scaleY;
     let col = Math.round((px - this.marginX) / this.cellW);
-    let row = Math.round((py - this.marginY) / this.cellH);
+    let row = this.nRows - 1 - Math.round((py - this.marginY) / this.cellH);
     col = Math.max(0, Math.min(this.nCols - 1, col));
     row = Math.max(0, Math.min(this.nRows - 1, row));
     this.select(col, row);
@@ -64,7 +67,11 @@ class HoleGrid {
   }
 
   _xy(col, row) {
-    return [this.marginX + col * this.cellW, this.marginY + row * this.cellH];
+    // row 0 at the bottom of the canvas (origin bottom-left) -- canvas y
+    // grows downward, so row increasing toward the top means subtracting
+    // from (nRows - 1) rather than multiplying row directly.
+    const y = this.marginY + (this.nRows - 1 - row) * this.cellH;
+    return [this.marginX + col * this.cellW, y];
   }
 
   draw() {

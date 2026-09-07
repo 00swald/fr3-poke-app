@@ -204,6 +204,11 @@ def run_mode1(payload, run_dir):
         probe_min_z_offset = float(payload.get("probe_min_z_offset", -20.0))
         probe_vel = float(payload.get("probe_vel", 10.0))
         stale_s = sensor_stale_ms / 1000.0
+        # Hard backstop on commanded z, independent of the force sensor --
+        # see config.HARD_FLOOR_Z_MM. Always on, not just when the sensor is
+        # simulated: a real sensor that's failed mid-run should get the same
+        # protection a simulated one gets.
+        z_floor_mm = float(payload.get("z_floor_mm", config.HARD_FLOOR_Z_MM))
 
         if not spheres_data.get("spheres"):
             raise RuntimeError("no spheres in spheres_data -- nothing to do")
@@ -233,6 +238,7 @@ def run_mode1(payload, run_dir):
             robot, sensor, hole_xy,
             start_z=z0 + probe_start_z_offset, min_z=z0 + probe_min_z_offset,
             vel=probe_vel, force_threshold_n=force_threshold_n, stale_s=stale_s,
+            z_floor_mm=z_floor_mm,
         )
         state.append_record({
             "index": "pre-probe", "hole": list(mount_hole),
@@ -251,6 +257,12 @@ def run_mode1(payload, run_dir):
             standoff_point = point + standoff_mm * normal
             standoff_pose = mts.target_to_pose(standoff_point, normal)
             contact_pose = mts.target_to_pose(point, normal)
+
+            violation = mts.z_floor_violation(standoff_pose, z_floor_mm)
+            if violation:
+                state.append_record({"index": target["index"], "radius": target["radius"],
+                                      "outcome": violation, "reached": False})
+                continue
 
             state.set_status(f"target {target['index']}: moving to standoff")
             err = robot.MoveL(standoff_pose, tool=0, user=0, vel=standoff_vel, acc=standoff_vel)
@@ -280,6 +292,7 @@ def run_mode1(payload, run_dir):
             result = mts.force_limited_approach(
                 robot, sensor, contact_pose, vel=approach_vel,
                 force_threshold_n=force_threshold_n, stale_s=stale_s,
+                z_floor_mm=z_floor_mm,
             )
             record = {
                 "index": target["index"], "radius": target["radius"],
@@ -321,8 +334,6 @@ def run_mode1(payload, run_dir):
 
 # ---------------------------------------------------------------------
 # Mode 2 -- drag-teach aim + gamepad release + force-limited poke
-# (ported from FR3_Aim&Poke/main.py, two known bugs fixed -- see module
-# docstrings in sensor_backend.py and probe.py / the comments below)
 # ---------------------------------------------------------------------
 
 SEARCH_DISTANCE_MM = 200.0
@@ -349,6 +360,7 @@ def run_mode2(payload, run_dir):
         search_distance_mm = float(payload.get("search_distance_mm", SEARCH_DISTANCE_MM))
         approach_vel = float(payload.get("approach_vel", 20.0))
         sensor_stale_ms = float(payload.get("sensor_stale_ms", 200.0))
+        z_floor_mm = float(payload.get("z_floor_mm", config.HARD_FLOOR_Z_MM))
 
         state.set_status("waiting for gamepad connection and button press...")
         button_pressed = False
@@ -387,10 +399,9 @@ def run_mode2(payload, run_dir):
         t0 = time.time()
 
         # Poll force in a side thread purely to feed the live graph at a
-        # steady cadence while force_limited_approach owns the actual
-        # motion/stop decision -- this replaces the old hand-rolled
-        # "poll fz_vals + check move_thread.is_alive()" loop with the one
-        # real collision-detection primitive in this codebase.
+        # steady cadence -- force_limited_approach owns the actual
+        # motion/stop decision, the one collision-detection primitive in
+        # this codebase.
         stop_poll = threading.Event()
 
         def _poll_force_history():
@@ -405,6 +416,7 @@ def run_mode2(payload, run_dir):
         result = mts.force_limited_approach(
             robot, sensor, target_pose, vel=approach_vel,
             force_threshold_n=force_threshold_n, stale_s=sensor_stale_ms / 1000.0,
+            z_floor_mm=z_floor_mm,
         )
         stop_poll.set()
         poll_thread.join(timeout=1.0)
@@ -451,6 +463,7 @@ def run_mode3(payload, run_dir):
         force_threshold_n = float(payload.get("force_threshold_n", 5.0))
         sensor_stale_ms = float(payload.get("sensor_stale_ms", 200.0))
         stale_s = sensor_stale_ms / 1000.0
+        z_floor_mm = float(payload.get("z_floor_mm", config.HARD_FLOOR_Z_MM))
 
         state.set_status("loading table calibration...")
         table_calib = tc.load_calibration(config.TABLE_CALIB_PATH)
@@ -492,6 +505,7 @@ def run_mode3(payload, run_dir):
                     robot, sensor, xy_robot,
                     start_z=z0 + probe_start_z_offset, min_z=z0 + probe_min_z_offset,
                     vel=probe_vel, force_threshold_n=force_threshold_n, stale_s=stale_s,
+                    z_floor_mm=z_floor_mm,
                 )
                 point_record = {
                     "i": i, "j": j, "x": float(xy_robot[0]), "y": float(xy_robot[1]),

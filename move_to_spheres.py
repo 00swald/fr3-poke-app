@@ -1,8 +1,7 @@
 """
 move_to_spheres.py — drive the FR3's TCP to STL-detected sphere contact
 points, approaching along the local surface normal, with a force-limited
-final approach (reusing Bota_sys.BotaSerialSensor, fixed relative to how
-FR3_Aim&Poke/main.py uses it -- see FIXES VS EXISTING SCRIPTS below).
+final approach (reusing Bota_sys.BotaSerialSensor).
 
 Pipeline: stl_geometry.py's JSON (sphere centers/contact points/normals, in
 the STL's COM-centered frame) + table_calibration.json (table-hole-grid ->
@@ -34,19 +33,17 @@ test_geometry_selftest.py and needs no hardware -- that only catches an
 implementation bug (e.g. an angle-order transposition), not a wrong
 real-world convention. Both matter; neither substitutes for the other.
 
-FIXES VS EXISTING SCRIPTS (found while building this -- see the plan for
-detail; not patched in place there, just not repeated here):
-  - FR3_Aim&Poke/main.py never runs sensor.update_plot(), so sensor.fz_vals
-    is likely always empty and its force stop may never fire. This script
-    spawns that thread explicitly.
-  - FR3_Aim&Poke/main.py's monitoring loop infers "done" from move-thread
-    liveness, which goes false almost immediately after an async MoveL
-    dispatch. This script polls GetRobotMotionDone() directly instead
-    (move_test.py's two-stage pattern), in the same loop that watches force.
-  - Bota_sys.py's background read thread has no watchdog -- a single bad
-    serial frame silently freezes all sensor values. This script tracks
-    time-since-last-new-sample and stops (fails toward stopping) if the
-    sensor goes stale mid-approach, independent of the force value itself.
+DESIGN NOTES:
+  - Bota_sys.BotaSerialSensor's background read thread only updates private
+    scalars; sensor.update_plot() must run as its own thread to populate the
+    public fz_vals/fx_vals/etc lists this module reads, so callers spawn
+    that thread explicitly.
+  - Motion completion is checked by polling GetRobotMotionDone() directly,
+    in the same loop that watches force, rather than inferring "done" from
+    any other signal.
+  - The sensor is watched for staleness (time since its last new sample)
+    independent of the force value itself, and treated as a fault -- fails
+    toward stopping -- if it goes stale mid-approach.
 
 Usage (dry run):
     python3 move_to_spheres.py spheres.json --table-calib table_calibration.json \\
@@ -175,6 +172,21 @@ def compose_targets(spheres_data, *, reach_to, table_calib=None, mount_hole=None
 # dry-run mode)
 # --------------------------------------------------------------------------
 
+def z_floor_violation(pose, floor_z_mm):
+    """None if pose's z clears floor_z_mm (robot base frame), else a
+    human-readable refusal message. A hard backstop against commanding the
+    TCP below a known-safe height, independent of and in addition to the
+    force-sensor stop -- for running on a real robot when the sensor can't be
+    trusted (simulated/disconnected), where a force-limited approach's only
+    real stop condition doesn't exist and it would otherwise run the full
+    commanded distance no matter what's in the way. floor_z_mm=None disables
+    the check (dry runs, or callers that haven't opted in)."""
+    if floor_z_mm is not None and pose[2] < floor_z_mm:
+        return (f"refused: target z={pose[2]:.2f}mm is below the hard safety "
+                f"floor of {floor_z_mm:.2f}mm (robot base frame)")
+    return None
+
+
 def _wait_motion_done(robot, start_timeout_s=2.0, poll_s=0.02):
     t0 = time.time()
     started = False
@@ -194,15 +206,24 @@ def _wait_motion_done(robot, start_timeout_s=2.0, poll_s=0.02):
 
 
 def force_limited_approach(robot, sensor, target_pose, *, vel, force_threshold_n,
-                            stale_s, poll_interval_s=0.02, start_timeout_s=2.0):
+                            stale_s, poll_interval_s=0.02, start_timeout_s=2.0,
+                            z_floor_mm=None):
     """Dispatch MoveL once, then poll motion-done + force + sensor staleness
     together in a single loop, calling StopMotion() the instant any safety
     condition trips. The move is itself already distance-bounded (target_pose
     is exactly the standoff-to-contact distance away, by construction of the
-    caller) -- unlike the existing scripts' PointsOffsetEnable relative-move
-    pattern, an absolute-pose MoveL cannot travel further than the commanded
-    point, so no separate forward-distance cap is needed on top of that."""
+    caller): an absolute-pose MoveL cannot travel further than the commanded
+    point, so no separate forward-distance cap is needed on top of that.
+
+    z_floor_mm, if given, is checked against target_pose BEFORE dispatch (see
+    z_floor_violation) -- this is the one stop condition that still applies
+    even if the force sensor never legitimately reports contact."""
     outcome = {"reached": False, "stopped_reason": None}
+
+    violation = z_floor_violation(target_pose, z_floor_mm)
+    if violation:
+        outcome["stopped_reason"] = violation
+        return outcome
 
     err = robot.MoveL(target_pose, tool=0, user=0, vel=vel, acc=vel)
     if err != 0:
@@ -245,7 +266,7 @@ def force_limited_approach(robot, sensor, target_pose, *, vel, force_threshold_n
 
 
 def run_target(robot, sensor, target, *, standoff_mm, standoff_vel, approach_vel,
-                force_threshold_n, stale_s, confirm):
+                force_threshold_n, stale_s, confirm, z_floor_mm=None):
     point, normal = target["point_robot"], target["normal_robot"]
     standoff_point = point + standoff_mm * normal
     standoff_pose_vec = target_to_pose(standoff_point, normal)
@@ -254,6 +275,12 @@ def run_target(robot, sensor, target, *, standoff_mm, standoff_vel, approach_vel
     record = {"index": target["index"], "radius": target["radius"],
               "standoff_pose": standoff_pose_vec, "contact_pose": contact_pose_vec,
               "outcome": None, "reached": False}
+
+    violation = z_floor_violation(standoff_pose_vec, z_floor_mm)
+    if violation:
+        record["outcome"] = violation
+        print(f"  {record['outcome']} -- skipping this target")
+        return record
 
     print(f"\n--- target {target['index']} (radius {target['radius']:.3f}mm) ---")
     print(f"  moving to standoff: {['%.3f' % v for v in standoff_pose_vec]}")
@@ -278,7 +305,8 @@ def run_target(robot, sensor, target, *, standoff_mm, standoff_vel, approach_vel
     print(f"  approaching (force-limited, threshold {force_threshold_n}N): "
           f"{['%.3f' % v for v in contact_pose_vec]}")
     result = force_limited_approach(robot, sensor, contact_pose_vec, vel=approach_vel,
-                                     force_threshold_n=force_threshold_n, stale_s=stale_s)
+                                     force_threshold_n=force_threshold_n, stale_s=stale_s,
+                                     z_floor_mm=z_floor_mm)
     record["outcome"], record["reached"] = result["stopped_reason"], result["reached"]
     print(f"  {record['outcome']}")
 
@@ -324,7 +352,8 @@ def execute(targets, args):
                     robot, sensor, target, standoff_mm=args.standoff_mm,
                     standoff_vel=args.standoff_vel, approach_vel=args.approach_vel,
                     force_threshold_n=args.force_threshold_n,
-                    stale_s=args.sensor_stale_ms / 1000.0, confirm=not args.no_confirm))
+                    stale_s=args.sensor_stale_ms / 1000.0, confirm=not args.no_confirm,
+                    z_floor_mm=args.z_floor_mm))
             except KeyboardInterrupt:
                 print("Run aborted by operator.")
                 break
@@ -373,6 +402,12 @@ def main(argv=None):
     ap.add_argument("--force-threshold-n", type=float, default=5.0)
     ap.add_argument("--sensor-port", default="/dev/ttyUSB0")
     ap.add_argument("--sensor-stale-ms", type=float, default=200.0)
+    ap.add_argument("--z-floor-mm", type=float, default=None,
+                     help="hard floor on commanded z (robot base frame, mm) -- refuse any standoff "
+                          "or contact move whose target dips below this, independent of the force "
+                          "sensor. Not set by default here since the CLI already requires the "
+                          "orientation-verification steps in the module docstring before --execute; "
+                          "the webapp sets this from config.HARD_FLOOR_Z_MM")
     ap.add_argument("--no-confirm", action="store_true",
                      help="skip the per-point standoff confirmation prompt (trusted repeat runs only)")
     ap.add_argument("--out-log", default="move_to_spheres_log.csv")

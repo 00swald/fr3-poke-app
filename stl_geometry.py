@@ -306,11 +306,12 @@ def fit_sphere_to_patch(patch_face_idx, face_vertex_indices, unique_verts,
     # can otherwise fit a sphere with near-zero RMS residual purely by
     # symmetry (both rims equidistant from the midpoint between them) despite
     # not being spherical at all. Deliberately NOT a "normals too parallel"
-    # filter (an earlier version of that heuristic wrongly rejected real
-    # shallow caps, whose normals genuinely are nearly parallel but still
-    # span all 3 dimensions) -- this only fires on true rank-2 degeneracy,
-    # which a shallow-but-real cap does not exhibit even at extreme
-    # shallowness (see test_geometry_selftest.py's 12-degree cap case).
+    # filter: a shallow-but-real cap has nearly-parallel normals by
+    # definition but still spans all 3 dimensions, so a parallelism
+    # threshold can't tell "shallow but real" apart from "actually flat."
+    # This only fires on true rank-2 degeneracy, which even an extremely
+    # shallow real cap does not exhibit (see test_geometry_selftest.py's
+    # 12-degree cap case).
     normal_cov = patch_normals.T @ patch_normals
     normal_eigvals = np.sort(np.linalg.eigvalsh(normal_cov))[::-1]
     if normal_eigvals[0] > 1e-12 and normal_eigvals[-1] / normal_eigvals[0] < min_normal_spread_ratio:
@@ -324,12 +325,12 @@ def fit_sphere_to_patch(patch_face_idx, face_vertex_indices, unique_verts,
     # Footprint (patch's own spatial extent) -- used below to sanity-bound the
     # fitted radius. NOTE: there is deliberately no normal-spread/"are these
     # normals nearly parallel" pre-filter here. A genuinely shallow spherical
-    # cap has, by definition, nearly-parallel normals -- that heuristic can't
-    # tell "shallow but real" apart from "actually flat" and was found (via
-    # test_geometry_selftest.py) to reject real shallow caps outright, which
-    # defeats the whole point of the geometric refinement below. The correct
-    # guard against flat/degenerate patches is applied AFTER fitting, against
-    # the fitted radius itself (see max_radius_footprint_ratio below).
+    # cap has, by definition, nearly-parallel normals, so that kind of
+    # heuristic can't tell "shallow but real" apart from "actually flat" --
+    # which would defeat the whole point of the geometric refinement below.
+    # The correct guard against flat/degenerate patches is applied AFTER
+    # fitting, against the fitted radius itself (see
+    # max_radius_footprint_ratio below).
     # bbox diagonal (cheap upper bound on max pairwise distance -- exact value
     # doesn't matter, this only feeds a generous order-of-magnitude sanity check)
     footprint_diameter = float(np.linalg.norm(pts.max(axis=0) - pts.min(axis=0)))
@@ -430,10 +431,10 @@ def flag_close_pairs(results, center_factor=0.5, radius_rel_tol=0.25):
       - centers much closer together than the smaller radius (near-coincident
         centers, as you'd get fitting the same underlying sphere twice), and
       - radii within radius_rel_tol of each other.
-    Using distance-vs-max(radius) alone (an earlier version of this function)
-    over-triggers: a small 4mm corner fillet and an unrelated 30mm body dome
-    can be well within "1.5x the big one's radius" of each other while being
-    completely different, non-duplicate features. NOT merged either way --
+    Comparing distance against max(radius) alone would over-trigger: a small
+    4mm corner fillet and an unrelated 30mm body dome can be well within
+    "1.5x the big one's radius" of each other while being completely
+    different, non-duplicate features. NOT merged either way --
     connected components already partition faces disjointly, so a genuine
     duplicate means either two real close-together physical spheres or a
     segmentation artifact; flagged for a human to look at, not silently

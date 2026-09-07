@@ -16,12 +16,20 @@ import move_to_spheres as mts
 
 def probe_vertical(robot, sensor, xy_robot, *, start_z, min_z, vel,
                     force_threshold_n, stale_s, poll_interval_s=0.02,
-                    start_timeout_s=2.0):
+                    start_timeout_s=2.0, z_floor_mm=None):
     """Move the TCP down to (xy_robot, start_z) at a safe travel height,
     then straight down (robot/world -Z; tool orientation held at whatever
     it currently is -- this is a vertical probe, not a normal-to-surface
     approach) toward (xy_robot, min_z), stopping on force threshold or
     sensor staleness. Retracts back to start_z before returning either way.
+
+    z_floor_mm, if given, is a hard floor on commanded z (robot base frame,
+    independent of the force sensor -- see move_to_spheres.z_floor_violation)
+    checked against both start_z and min_z before dispatching anything.
+    min_z is, by design, meant to sit past the real surface (so the force
+    stop -- not a fully-trusted min_z -- is what actually halts the probe);
+    with no working sensor that design inverts into "always drives to
+    min_z," which is exactly what this floor is for.
 
     Returns {"z_contact": float or None, "outcome": str, "reached": bool}.
     z_contact is the actual TCP z (via GetActualTCPPose), not the commanded
@@ -39,6 +47,9 @@ def probe_vertical(robot, sensor, xy_robot, *, start_z, min_z, vel,
     # 1. Travel to the safe start pose above the probe point (not
     # force-limited -- by contract of the caller, start_z is a safe height).
     start_pose = [x, y, float(start_z), rx, ry, rz]
+    violation = mts.z_floor_violation(start_pose, z_floor_mm)
+    if violation:
+        return {"z_contact": None, "outcome": violation, "reached": False}
     err = robot.MoveL(start_pose, tool=0, user=0, vel=vel, acc=vel)
     if err != 0:
         return {"z_contact": None, "outcome": f"travel-to-start MoveL rejected, code {err}", "reached": False}
@@ -46,11 +57,14 @@ def probe_vertical(robot, sensor, xy_robot, *, start_z, min_z, vel,
 
     # 2. Force-limited descent toward the floor. An absolute-pose MoveL
     # can't travel further than min_z, so no separate distance cap is
-    # needed on top of the force/staleness watchdogs.
+    # needed on top of the force/staleness watchdogs -- z_floor_mm (checked
+    # inside force_limited_approach) is the backstop for when those
+    # watchdogs themselves can't be trusted.
     target_pose = [x, y, float(min_z), rx, ry, rz]
     result = mts.force_limited_approach(
         robot, sensor, target_pose, vel=vel, force_threshold_n=force_threshold_n,
         stale_s=stale_s, poll_interval_s=poll_interval_s, start_timeout_s=start_timeout_s,
+        z_floor_mm=z_floor_mm,
     )
 
     err, contact_pose = robot.GetActualTCPPose(0)

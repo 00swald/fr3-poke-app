@@ -4,8 +4,7 @@ Three modes, one Flask server:
   1. Target sphere centers  -- upload an STL, pick a table hole, poke every
      detected sphere along its surface normal, force-limited.
   2. Drag-teach aim + release -- hand-guide the arm, press a gamepad
-     button, force-limited poke forward (ported from FR3_Aim&Poke/main.py,
-     two known bugs fixed -- see hardware.py/sensor_backend.py docstrings).
+     button, force-limited poke forward.
   3. Height map -- vertically probe an 11x11 grid around a selected table
      point.
 

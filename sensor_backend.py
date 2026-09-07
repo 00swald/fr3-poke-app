@@ -9,13 +9,11 @@ That's the whole contract. Both backends below satisfy it, plus a few extra
 list attributes / start()/stop() for lifecycle and CSV-logging parity with
 move_to_spheres.execute().
 
-RealSensorBackend wraps Bota_sys.BotaSerialSensor and is where a real,
-already-identified bug gets fixed: BotaSerialSensor's background read
+RealSensorBackend wraps Bota_sys.BotaSerialSensor. Its background read
 thread only updates private _fx.._mz scalars -- a SEPARATE method,
 update_plot(), must be run as its own thread to actually append to the
-public fz_vals/fx_vals/etc lists. FR3_Aim&Poke/main.py never starts that
-thread, so its fz_vals is likely always empty and its force-stop probably
-never fires. RealSensorBackend.start() starts it explicitly.
+public fz_vals/fx_vals/etc lists that the rest of this app reads.
+RealSensorBackend.start() starts it explicitly.
 
 `Bota_sys` (and the plotly/IPython/pyserial/crc it drags in at module
 scope) is imported lazily, inside RealSensorBackend.__init__, so that
@@ -136,9 +134,9 @@ class RealSensorBackend:
 
     def start(self):
         self._sensor.start()
-        # THE FIX: BotaSerialSensor's own read thread never populates the
-        # public *_vals lists -- only update_plot() does, and it must be run
-        # as its own thread. FR3_Aim&Poke/main.py never does this.
+        # BotaSerialSensor's own read thread never populates the public
+        # *_vals lists -- only update_plot() does, and it must be run as
+        # its own thread.
         self._update_thread = threading.Thread(target=self._sensor.update_plot, daemon=True)
         self._update_thread.start()
 
